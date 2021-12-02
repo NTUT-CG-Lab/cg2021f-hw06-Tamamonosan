@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - STL</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="main.css">
+	</head>
+	<body>
+        <div id="info" class="info">
+            Pytorch3D Tutorial: <br>
+            <a href="https://pytorch3d.org/tutorials/deform_source_mesh_to_target_mesh">
+                Deform a source mesh to form a target mesh using 3D loss functions</a><br>
+        </div>
+		<div style="position:absolute; top: 15%; left: 50%;"><p id="modelNum"></p></div>
+		<div style="position:absolute; top: 80%; left: 48%;"><p id="modellist"></p></div>
+		<button type="button" onclick="Button_Function()" id="changemodel" value="4" style="position:absolute; top: 80%; left: 52%; width:140px;height:40;border:2px #9999FF dashed;background-color:pink;">Change Model</button>
+		<select id="changemodellist" style="position:absolute; top: 80%; left: 44%; width:100px;height:40;border:2px >
+			<option value="-1" selected="selected">更換模型</option>
+			<option value="0" >Dolphin</option>
+			<option value="1" >Cow</option>
+			<option value="2" >skull</option>
+		</select>
+		<script>
+			function Button_Function() {
+				document.getElementById("changemodel").value = document.getElementById("changemodellist").value
+				console.log(document.getElementById("changemodel").value)
+			}
+		</script>
+		<script src="scoreoutputer.min.js"></script>
+		<script>
+			var so = new ScoreOutputer("109598030");
+			so.installCSS(function(){
+				so.addChild("場景顯示目標模型", 1, true);
+				so.addChild("場景顯示成果模型", 1, true);
+				so.addChild("執行pytorch3D程式碼產生25個模型", 2, true);
+				so.addChild("可拖動GUI顯示不同階段模型", 3, true);
+				so.addChild("可更換其他模型", 3, true);
+
+				so.renderModal(
+
+					document.body,
+					'rgba(100,45,58,1)', 
+					'white', 
+					'15pt', 
+					'15px', 
+					dialogTitle='自我評分表'
+				);
+				
+				so.installDownloadBtn();
+				
+				so.renderBtn(
+					document.querySelector("#info"),
+					"開啟自評表"
+				);
+			});
+		</script>
+		<script type="module">
+
+			import * as THREE from './build/three.module.js';
+
+			import { PLYLoader } from './jsm/loaders/PLYLoader.js';
+
+            import { GUI } from './jsm/libs/dat.gui.module.js';
+
+			let container;
+
+			let default_selcet = true ;
+
+			let camera, cameraTarget, scene, renderer;
+
+            const models = [0,5,10,20,30,40,50,60,80,100,130,160,190,220,250,300,400,500,600,800,1000,1250,1500,1750,2000];
+			var mesh, mesh2, gui, status = -1, order = -1;
+			var mesh_list = [];
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				// Camera
+				camera = new THREE.PerspectiveCamera( 35, window.innerWidth / window.innerHeight, 1, 15 );
+				camera.position.set( 3, 0.15, 3 );
+
+				cameraTarget = new THREE.Vector3( 0, 0.1, 0 );
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x72645b );
+				scene.fog = new THREE.Fog( 0x72645b, 2, 15 );
+
+				// Ground
+
+				const plane = new THREE.Mesh(
+					new THREE.PlaneGeometry( 40, 40 ),
+					new THREE.MeshPhongMaterial( { color: 0x999999, specular: 0x101010 } )
+				);
+				plane.rotation.x = - Math.PI / 2;
+				plane.position.y = - 0.5;
+				scene.add( plane );
+
+				plane.receiveShadow = true;
+
+
+				// PLY model files
+
+                const loader = new PLYLoader();
+
+				// Load original model according to model_id
+				loader.load( './models/dolphin.ply', function ( geometry ) {
+
+					const material = new THREE.MeshPhongMaterial( { color: 0xFF5555, specular: 0x111111, shininess: 200 } );
+					geometry.computeVertexNormals();
+
+					mesh = new THREE.Mesh( geometry, material );
+
+					//dolphin = ( -0.5, -0.5, 0 )
+					//cow = (0, 0, 0)
+					//skull = ( 0, 0, 1 )
+					mesh.position.set( -0.5, -0.5, 0 );
+					
+					//dolphin = 1.5
+					//cow = 0.5
+					//skull = 0.005
+					mesh.scale.multiplyScalar( 1.5 );
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+					scene.add( mesh );
+				} );
+
+
+				const material = new THREE.MeshPhongMaterial( { color: 0xAAAAAA, specular: 0x111111, shininess: 200 } );
+				
+
+				//models.forEach(element => loader.load( './cow/model_' + element.toString() + '.ply', 
+				models.forEach( element => loader.load('./dolphin/model_' + element.toString() +'.ply',
+				function ( geometry ) {
+					geometry.computeVertexNormals();
+                    mesh2 = new THREE.Mesh( geometry, material );
+					mesh2.name = element;
+                    mesh2.position.set( 0.5, -0.5, 0 );
+					mesh2.scale.multiplyScalar( 1.5 );
+                    mesh2.castShadow = true;
+                    mesh2.receiveShadow = true;
+					if(element!=0){
+						mesh2.visible = false;
+					}
+                    scene.add( mesh2 );
+					mesh_list.push( mesh2 ) ;
+                } ));
+
+				const effectController = {step: 1};
+				gui = new GUI();
+				gui.add(effectController, 'step', 1, models.length, 1 ).onChange(iterChanger);
+
+				let currentIter = effectController.step;
+				function iterChanger(){
+					if(currentIter==effectController.step) return;
+					currentIter=effectController.step;
+					var textTag = document.getElementById('modelNum');
+					textTag.innerText = "iter #"+models[currentIter-1].toString();
+					for (let i = 0;i<models.length;i++){
+						let item = scene.getObjectByName(models[i]);
+						if(i!=currentIter-1 && item.visible==true){
+							item.visible = false;
+						}
+						else if (i==currentIter-1){
+							item.visible = true;
+						}
+					}
+				}
+
+
+				// Lights
+
+				scene.add( new THREE.HemisphereLight( 0x443333, 0x111122 ) );
+
+				addShadowedLight( 1, 1, 1, 0xffffff, 1.35 );
+				addShadowedLight( 0.5, 1, - 1, 0xffaa00, 1 );
+				// renderer
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.outputEncoding = THREE.sRGBEncoding;
+
+				renderer.shadowMap.enabled = true;
+
+				container.appendChild( renderer.domElement );
+
+				//
+
+				window.addEventListener( 'resize', onWindowResize );
+
+			}
+           
+			function addShadowedLight( x, y, z, color, intensity ) {
+
+				const directionalLight = new THREE.DirectionalLight( color, intensity );
+				directionalLight.position.set( x, y, z );
+				scene.add( directionalLight );
+
+				directionalLight.castShadow = true;
+
+				const d = 1;
+				directionalLight.shadow.camera.left = - d;
+				directionalLight.shadow.camera.right = d;
+				directionalLight.shadow.camera.top = d;
+				directionalLight.shadow.camera.bottom = - d;
+
+				directionalLight.shadow.camera.near = 1;
+				directionalLight.shadow.camera.far = 4;
+
+				directionalLight.shadow.bias = - 0.002;
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+				render();
+
+				/////////////////////////////////////////////////////////////////////
+				if( status != order ){
+					status = order;
+					default_selcet = true;
+				}
+				var e = document.getElementById("changemodel");
+				order = e.value;
+				console.log(order)
+				switch(order){
+					case "0":
+						if( default_selcet === true ){
+							status = 0;
+							default_selcet = false;
+							scene.remove( mesh );	
+							for( var i = 0 ; i <= 24 ; i++ )
+							{
+								scene.remove( mesh_list[i] ) ;
+							}
+							mesh_list=[];
+							dolphin_change();
+						}
+					case "1":
+						if( default_selcet === true ){
+							default_selcet = false;
+							scene.remove( mesh );	
+							for( var i = 0 ; i <= 24 ; i++ )
+							{
+								scene.remove( mesh_list[i] ) ;
+							}
+							mesh_list=[];
+							cow_change();
+					}
+					case "2":
+						if( default_selcet === true ){
+							default_selcet = false;
+							scene.remove( mesh );	
+							for( var i = 0 ; i <= 24 ; i++ )
+							{
+								scene.remove( mesh_list[i] ) ;
+							}
+							mesh_list=[];
+							skull_change();
+					}					  
+				}
+				///////////////////////////////////////////////////////////////
+
+			}
+
+			function render() {
+
+				const timer = Date.now() * 0.0005;
+
+				camera.position.x = Math.cos( timer ) * 3;
+				camera.position.z = Math.sin( timer ) * 3;
+
+				camera.lookAt( cameraTarget );
+
+				renderer.render( scene, camera );
+
+			}
+
+			function dolphin_change() {
+                const loader = new PLYLoader();
+				loader.load( './models/dolphin.ply', function ( geometry ) {
+					const material = new THREE.MeshPhongMaterial( { color: 0xFF5555, specular: 0x111111, shininess: 200 } );
+					geometry.computeVertexNormals();
+					mesh = new THREE.Mesh( geometry, material );
+					mesh.position.set( -0.5, -0.5, 0 );
+					mesh.scale.multiplyScalar( 1.5 );
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+					scene.add( mesh );
+				} );
+				const material = new THREE.MeshPhongMaterial( { color: 0xAAAAAA, specular: 0x111111, shininess: 200 } );
+				models.forEach(element => loader.load( './dolphin/model_' + element.toString() + '.ply', 
+				function ( geometry ) {
+					geometry.computeVertexNormals();
+                    mesh2 = new THREE.Mesh( geometry, material );
+					mesh2.name = element; 
+                    mesh2.position.set( 0.5, -0.5, 0 );
+					mesh2.scale.multiplyScalar( 1.5 );
+                    mesh2.castShadow = true;
+                    mesh2.receiveShadow = true;
+					if( element != 0 )
+						mesh2.visible = false;
+                    scene.add( mesh2 );
+					mesh_list.push( mesh2 ) ;
+                } ));
+			}
+
+			function cow_change() {
+				const loader = new PLYLoader();
+				loader.load( './models/cow.ply', function ( geometry ) {
+					const material = new THREE.MeshPhongMaterial( { color: 0xFF5555, specular: 0x111111, shininess: 200 } );
+					geometry.computeVertexNormals();
+					mesh = new THREE.Mesh( geometry, material );
+					mesh.position.set( -0.5, 0, 0 );
+					mesh.scale.multiplyScalar( 0.5 );
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+					scene.add( mesh );
+				} );
+				const material = new THREE.MeshPhongMaterial( { color: 0xAAAAAA, specular: 0x111111, shininess: 200 } );
+				models.forEach(element => loader.load( './cow/model_' + element.toString() + '.ply', 
+				function ( geometry ) {
+					geometry.computeVertexNormals();
+					mesh2 = new THREE.Mesh( geometry, material );
+					mesh2.name = element; 
+					mesh2.position.set( 0.5, 0, 0 );
+					mesh2.scale.multiplyScalar( 0.5 );
+					mesh2.castShadow = true;
+					mesh2.receiveShadow = true;
+					if( element != 0 )
+						mesh2.visible = false;
+					scene.add( mesh2 );
+					mesh_list.push( mesh2 ) ;
+				} ));
+			}
+			
+			function skull_change() {
+				const loader = new PLYLoader();
+				loader.load( './models/skull.ply', function ( geometry ) {
+					const material = new THREE.MeshPhongMaterial( { color: 0xFF5555, specular: 0x111111, shininess: 200 } );
+					geometry.computeVertexNormals();
+					mesh = new THREE.Mesh( geometry, material );
+					mesh.position.set( 0, 0, 1 );
+					mesh.scale.multiplyScalar( 0.005 );
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+					scene.add( mesh );
+				} );
+				const material = new THREE.MeshPhongMaterial( { color: 0xAAAAAA, specular: 0x111111, shininess: 200 } );
+				models.forEach(element => loader.load( './skull/model_' + element.toString() + '.ply', 
+				function ( geometry ) {
+					geometry.computeVertexNormals();
+					mesh2 = new THREE.Mesh( geometry, material );
+					mesh2.name = element; 
+					mesh2.position.set( 0.5, 0, 0 );
+					mesh2.scale.multiplyScalar( 0.5 );
+					mesh2.castShadow = true;
+					mesh2.receiveShadow = true;
+					if( element != 0 )
+						mesh2.visible = false;
+					scene.add( mesh2 );
+					mesh_list.push( mesh2 ) ;
+				} ));
+			}
+		</script>
+	</body>
+</html>
